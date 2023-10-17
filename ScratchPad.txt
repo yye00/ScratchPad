@@ -461,3 +461,75 @@ Send a message
 
 ChatGPT may produce inaccurate information about people, places, or facts. ChatGPT September 25 Version
 ChatGPT
+
+The Intel Math Kernel Library (MKL) is highly optimized for various mathematical operations, particularly for operations like General Matrix Multiply (GEMM) for different data types, including complex numbers. The function for complex double-precision numbers is `cblas_zgemm`.
+
+Below is an example of how you can use `cblas_zgemm` from the MKL in C++ with the `Tensor` structure you've defined earlier. The focus is on performance, leveraging the MKL's optimized operations. We will handle memory management, data alignment, and ensure the most efficient parameters are used for the operation.
+
+Firstly, make sure to include the necessary headers, particularly those for the MKL:
+
+```cpp
+#include <mkl.h>
+#include "Tensor.h"  // Assuming your Tensor definition is in this header
+```
+
+Here is the high-performance matrix multiplication function using your `Tensor` structure:
+
+```cpp
+Tensor zgemm(const Tensor& A, const Tensor& B) {
+    // Check dimensions: If A is (m x k) and B is (k x n), the result will be (m x n)
+    if (A.shape[1] != B.shape[0]) {
+        throw std::invalid_argument("Inner matrix dimensions do not match.");
+    }
+
+    int m = A.shape[0];
+    int k = A.shape[1];
+    int n = B.shape[1];
+
+    // Allocate memory for the result matrix C
+    std::complex<double>* C_data = (std::complex<double>*)mkl_malloc(m * n * sizeof(std::complex<double>), 64);
+    if (C_data == nullptr) {
+        throw std::bad_alloc();
+    }
+
+    // Prepare parameters for cblas_zgemm
+    MKL_Complex16 alpha = {1.0, 0.0};
+    MKL_Complex16 beta  = {0.0, 0.0};
+
+    // Leading dimensions of the matrices
+    int lda = k;
+    int ldb = n;
+    int ldc = n;
+
+    // Perform matrix multiplication using MKL's cblas_zgemm function
+    cblas_zgemm(CblasRowMajor,
+                CblasNoTrans,
+                CblasNoTrans,
+                m,
+                n,
+                k,
+                &alpha,
+                A.data,
+                lda,
+                B.data,
+                ldb,
+                &beta,
+                C_data,
+                ldc);
+
+    // Create the result Tensor
+    Tensor C;
+    C.data = C_data;
+    C.size = m * n;
+    C.shape = {m, n};
+
+    return C;
+}
+```
+
+In this function:
+- We're using the `cblas_zgemm` function, which is part of the C interface to the BLAS functions in the MKL.
+- We've allocated aligned memory for the result matrix with `mkl_malloc` for optimal performance with MKL routines. The alignment is set to 64 for compatibility with most modern platforms.
+- We're using `CblasRowMajor` as the matrix storage order because it's typically more efficient in C/C++.
+- `CblasNoTrans` is used because we're not transposing any matrices; adjust if your use case requires transposition.
+- `alpha`
