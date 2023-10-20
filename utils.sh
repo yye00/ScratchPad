@@ -161,3 +161,35 @@ create_lua_modulefile() {
 
     echo "Lua module file created at ${LUA_FILE_LOCATION}/${LUA_MODULE_FILE_NAME}.lua"
 }
+
+
+#######################################################################################
+#######################################################################################
+#######################################################################################
+
+# Calling the Python script and capturing the ordered list of packages.
+ORDERED_PACKAGES=$(python3 get_ordered_dependencies.py)
+check_output "Failed to retrieve ordered package list."
+
+# Iterate over the packages and perform the required actions
+while IFS= read -r package; do
+    echo "Processing package: $package"
+
+    # Navigate to the appropriate directory and initiate the build process.
+    # Replace this with the actual command(s) you need to build your package.
+    PACKAGE_BUILD_SCRIPT="root_directory/package_families/${package}/build.sh"
+    if [ -f "$PACKAGE_BUILD_SCRIPT" ]; then
+        echo "Building $package..."
+        bash "$PACKAGE_BUILD_SCRIPT"
+        
+        # Check if the build was successful
+        check_output "Error: Failed to build $package"
+    else
+        echo "Build script for $package not found."
+        # Exit because we expect every package to have a build script
+        exit 1
+    fi
+
+done <<< "$ORDERED_PACKAGES"
+
+# (Rest of your script)
