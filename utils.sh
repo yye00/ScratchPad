@@ -192,4 +192,18 @@ while IFS= read -r package; do
 
 done <<< "$ORDERED_PACKAGES"
 
-# (Rest of your script)
+#######################################################################################
+#######################################################################################
+#######################################################################################
+
+# Define the directories
+directories="dir1,dir2,dir3"
+
+# Call the Python script
+mapfile -t script_files < <(python find_sh_files.py "$directories")
+
+# Iterate over the returned paths in a 'while' loop
+for script in "${script_files[@]}"; do
+    echo "Processing $script"
+    # Your processing here...
+done
