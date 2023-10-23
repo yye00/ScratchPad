@@ -1,3 +1,62 @@
+
+A wheel file (`.whl`) is a built package that you can install using pip. If you want to extract package information from a wheel file without actually installing it, you can do so by reading the metadata directly from the file. This process involves unpacking the wheel and then parsing the metadata files contained within it. Here's how you can do it:
+
+1. **Extract the Wheel File**: First, you'll need to unzip the wheel file because it's essentially a zip format. You can do this using Python's built-in `zipfile` module.
+
+2. **Read Metadata**: After extraction, there will be a `.dist-info` directory containing the metadata files. The `METADATA` file (or sometimes `PKG-INFO` for older formats) contains the package information.
+
+Here's a sample script to demonstrate these steps:
+
+```python
+import zipfile
+import os
+import email
+
+# Replace with your .whl file path
+wheel_path = 'your_package-1.0-py3-none-any.whl'
+
+# Step 1: Extract the Wheel file
+with zipfile.ZipFile(wheel_path, 'r') as zip_ref:
+    # Extract all contents into a temporary directory
+    extract_dir = 'temp_extracted'
+    zip_ref.extractall(extract_dir)
+
+    # Find the .dist-info directory
+    dist_info_dir = [name for name in zip_ref.namelist() if name.endswith('.dist-info/')]
+
+    if not dist_info_dir:
+        print("No .dist-info found")
+    else:
+        # Assuming only one .dist-info directory is present
+        dist_info_dir = dist_info_dir[0]
+
+        # The metadata file should be in the .dist-info directory
+        metadata_path = os.path.join(extract_dir, dist_info_dir, 'METADATA')
+
+        # Step 2: Read Metadata
+        if os.path.exists(metadata_path):
+            with open(metadata_path, 'r') as meta_file:
+                metadata_content = meta_file.read()
+
+                # Parse the metadata content
+                metadata = email.message_from_string(metadata_content)
+
+                # Now, you can access various metadata fields
+                print("Package Name:", metadata['Name'])
+                print("Version:", metadata['Version'])
+                print("Summary:", metadata['Summary'])
+                # ... and so on for other metadata fields you're interested in
+        else:
+            print("METADATA file not found")
+
+# Optionally, clean up the extracted files directory after you're done
+import shutil
+shutil.rmtree(extract_dir)
+```
+
+This script extracts the wheel file, locates the `METADATA` file, reads it, and parses its content. The metadata is structured in RFC 822 format, similar to email headers, which is why we use `email.message_from_string` for parsing. You can then access individual fields like the package name, version, and more.
+
+
 mTo achieve the functionality you're describing, we need to ensure proper communication between the parent and child scripts using environment variables. The child script will use these environment variables to construct a Lua module file with specific settings.
 
 Below is a detailed approach:
