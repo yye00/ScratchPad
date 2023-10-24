@@ -533,3 +533,62 @@ In this function:
 - We're using `CblasRowMajor` as the matrix storage order because it's typically more efficient in C/C++.
 - `CblasNoTrans` is used because we're not transposing any matrices; adjust if your use case requires transposition.
 - `alpha`
+
+
+
+Dask's `performance_report` is implemented as a context manager, making it convenient for wrapping blocks of code. However, if you prefer a start/stop mechanism, you would need to create a wrapper around the context manager to control its behavior.
+
+Below is an example of how you might create such a wrapper. We'll define a class that keeps track of the context manager's state and provides `start` and `stop` methods. This way, you can control when the performance report starts and stops recording data.
+
+```python
+from dask.diagnostics import ResourceProfiler
+from contextlib import contextmanager
+
+class PerformanceReport:
+    def __init__(self, filename):
+        self.filename = filename
+        self._report_context = None
+        self._profiler = ResourceProfiler()
+
+    @contextmanager
+    def _performance_report_context(self):
+        with self._profiler:
+            yield  # The actual work will happen here, during this yielded period.
+
+    def start(self):
+        """
+        Start the performance report. This method initializes the context
+        manager but defers entering it until the `stop` method is called.
+        """
+        # Create the context manager but don't activate it yet.
+        self._report_context = self._performance_report_context()
+        # Enter the context manager's setup phase.
+        self._report_context.__enter__()
+
+    def stop(self):
+        """
+        Stop the performance report. This method finalizes the context and
+        creates the report.
+        """
+        if self._report_context is not None:
+            # Exit the context manager, which triggers report creation.
+            self._report_context.__exit__(None, None, None)
+            # Save the report to a file.
+            self._profiler.visualize(filename=self.filename)  # Provide the HTML filename here
+            # Clear the context manager.
+            self._report_context = None
+        else:
+            raise Exception("Must call start before stop.")
+
+# Usage example:
+report = PerformanceReport(filename='myfile.html')
+report.start()
+
+# ... do some work with Dask ...
+
+report.stop()
+```
+
+In this design, the `PerformanceReport` class encapsulates the context manager. When you call `start()`, it prepares the context manager, and when you call `stop()`, it triggers the teardown phase of the context manager, which is where the report is typically generated.
+
+This approach provides a start/stop interface while still utilizing the context manager's capabilities in managing the setup and teardown phases of the performance report. Also, this allows the flexibility of using Dask's diagnostic tool without the `with` statement.
