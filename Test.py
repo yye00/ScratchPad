@@ -9,9 +9,16 @@ def create_matrix_train(num_matrices, dim):
 
 # Function to contract matrix train with cotengra
 def contract_with_cotengra(matrix_train, num_threads=4):
-    # Create an einsum expression for the matrix chain multiplication
-    indices = [f'a{i},b{i}' for i in range(len(matrix_train))]
-    expression = ','.join(indices) + '->'
+    # Create the list of tensors and contraction indices
+    tensors = {}
+    einsum_expr = ''
+    for i, matrix in enumerate(matrix_train):
+        tensors[f'T{i}'] = matrix
+        if i == 0:
+            einsum_expr += f'T{i}[i0,j0]'
+        else:
+            einsum_expr += f',T{i}[i{i-1},j{i}]'
+    einsum_expr += '->' + ''.join([f'j{i}' for i in range(len(matrix_train))])
 
     # Create a cotengra optimizer with parallel execution
     opt = ctg.HyperOptimizer(
@@ -23,8 +30,9 @@ def contract_with_cotengra(matrix_train, num_threads=4):
     )
 
     # Contract using cotengra
-    tn = ctg.TensorNetwork([matrix for matrix in matrix_train], indices)
-    result = tn.contract(opt, backend='numpy', executor=ctg.ThreadPoolExecutor(max_workers=num_threads))
+    tn = ctg.ContractionTree.from_equation(einsum_expr, *tensors.values())
+    tn.optimize(opt)
+    result = tn.contract(output_backend='numpy', executor=ctg.ThreadPoolExecutor(max_workers=num_threads))
     return result
 
 # Parameters
