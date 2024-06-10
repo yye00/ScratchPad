@@ -14,12 +14,9 @@ py::array_t<double> batch_matrix_multiply(const py::list& A_list, py::array_t<do
         throw std::runtime_error("Input matrix B must be 1D");
     }
 
-    double* ptrB = static_cast<double*>(bufB.ptr);
+    double* current_B = static_cast<double*>(bufB.ptr);
     int total_elements_B = bufB.size;
-    double* result_data = new double[total_elements_B];
-    std::copy(ptrB, ptrB + total_elements_B, result_data);
 
-    double* current_B = result_data;
     double* next_B = new double[total_elements_B];
 
     for (size_t idx = 0; idx < A_list.size(); ++idx) {
