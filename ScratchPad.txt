@@ -1,594 +1,66 @@
-Open sidebar
-Update Code: Size and Shape
-
-GPT-4
-
-User
-check this code for errors. add comments to the HPTT create plan method to explain what the arguments do. change the tensor struct size and shape from int's to size_t and make the appropriate conversions elsewhere in the code. 
 #include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
 #include <pybind11/numpy.h>
-#include <complex>
-#include <vector>
+#include <pybind11/stl.h>
 #include <mkl.h>
-#include <hptt.h>
+#include <vector>
+#include <iostream>
 
-using namespace std;
 namespace py = pybind11;
 
-struct Tensor {
-    std::complex<double>* data;
-    std::size_t size;
-    std::vector<int> shape;
-};
+py::array_t<double> batch_matrix_multiply(py::array_t<double> array1, py::array_t<double> array2) {
+    py::buffer_info buf1 = array1.request();
+    py::buffer_info buf2 = array2.request();
 
-Tensor numpy2tensor(py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> input_array) {
-    Tensor tensor;
-    tensor.data = input_array.mutable_data(); // Point directly to numpy array data
-    tensor.size = input_array.size();
-    tensor.shape = std::vector<int>(input_array.shape(), input_array.shape() + input_array.ndim());
-    return tensor;
-}
-
-py::array_t<std::complex<double>> tensor2numpy(Tensor& tensor) {
-    return py::array_t<std::complex<double>>(tensor.shape, tensor.data);
-}
-
-Tensor transpose_t(const Tensor& tensor, const std::vector<int>& perm) {
-    // Calculate the shape of the result tensor
-    std::vector<int> result_shape(tensor.shape.size());
-    for (int i = 0; i < perm.size(); ++i) {
-        result_shape[i] = tensor.shape[perm[i]];
+    if (buf1.ndim != 2) {
+        throw std::runtime_error("Input array1 must be 2D");
+    }
+    if (buf2.ndim != 3) {
+        throw std::runtime_error("Input array2 must be 3D");
     }
 
-    // Allocate memory for the result tensor
-    std::complex<double>* result_data = (std::complex<double>*)mkl_malloc(tensor.size * sizeof(std::complex<double>), 64);
+    auto rows1 = buf1.shape[0];
+    auto cols1 = buf1.shape[1];
+    auto batch_size = buf2.shape[0];
+    auto rows2 = buf2.shape[1];
+    auto cols2 = buf2.shape[2];
 
-    std::complex<double> alpha(1,0);
-    std::complex<double> beta(0,0);
+    if (cols1 != rows2) {
+        throw std::runtime_error("Matrix dimensions must match for multiplication");
+    }
 
-    // Use HPTT for tensor transposition
-    auto plan = hptt::create_plan( perm.data(),
-        tensor.shape.size(),
-        alpha,
-        tensor.data,
-        tensor.shape.data(),
-        NULL,
-        beta,
-        result_data,
-        NULL,
-        hptt::ESTIMATE,
-        1,
-        NULL,
-        true
-    );
-    plan->execute();
+    std::vector<size_t> result_shape = {batch_size, rows1, cols2};
+    py::array_t<double> result(result_shape);
+    py::buffer_info buf_result = result.request();
 
-    Tensor result;
-    result.data = result_data;
-    result.size = tensor.size;
-    result.shape = result_shape;
+    double* ptr1 = static_cast<double*>(buf1.ptr);
+    double* ptr2 = static_cast<double*>(buf2.ptr);
+    double* ptr_result = static_cast<double*>(buf_result.ptr);
+
+    std::vector<const double*> a_array(batch_size);
+    std::vector<const double*> b_array(batch_size);
+    std::vector<double*> c_array(batch_size);
+
+    for (size_t i = 0; i < batch_size; ++i) {
+        a_array[i] = ptr1;
+        b_array[i] = ptr2 + i * rows2 * cols2;
+        c_array[i] = ptr_result + i * rows1 * cols2;
+    }
+
+    const double alpha = 1.0;
+    const double beta = 0.0;
+
+    CBLAS_TRANSPOSE trans = CblasNoTrans;
+
+    cblas_dgemm_batch(CblasRowMajor, &trans, &trans, 
+                      &rows1, &cols2, &cols1, 
+                      &alpha, a_array.data(), &cols1, 
+                      b_array.data(), &cols2, 
+                      &beta, c_array.data(), &cols2, 
+                      1, &batch_size);
+
     return result;
 }
 
-py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> transpose(py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> input, std::vector<int> axes) {
-    auto tensor = numpy2tensor(input);
-    auto output = transpose_t(tensor, axes);
-    return tensor2numpy(output);
+PYBIND11_MODULE(example, m) {
+    m.def("batch_matrix_multiply", &batch_matrix_multiply, "Perform batch matrix multiplication using MKL");
 }
-
-PYBIND11_MODULE(test_hptt, m) {
-    m.def("transpose", &transpose, "the transpose");
-}
-
-ChatGPT
-Here are the modifications and comments added to your code, which include changing the int types for the tensor's size and shape to size_t and making relevant conversions. Additionally, I've added comments to explain the arguments of the hptt::create_plan method and fixed potential issues:
-
-cpp
-Copy code
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
-#include <pybind11/numpy.h>
-#include <complex>
-#include <vector>
-#include <mkl.h>
-#include <hptt.h>
-
-using namespace std;
-namespace py = pybind11;
-
-struct Tensor {
-    std::complex<double>* data;
-    std::size_t size; // Changed to size_t for consistency with size types
-    std::vector<std::size_t> shape; // Changed to size_t to match the natural data type for sizes and indices
-};
-
-Tensor numpy2tensor(py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> input_array) {
-    Tensor tensor;
-    tensor.data = input_array.mutable_data(); // Point directly to numpy array data
-    tensor.size = input_array.size();
-    // Conversion to appropriate size type for the shape
-    tensor.shape = std::vector<std::size_t>(input_array.shape(), input_array.shape() + input_array.ndim());
-    return tensor;
-}
-
-py::array_t<std::complex<double>> tensor2numpy(Tensor& tensor) {
-    // Need to cast size_t to int because py::array_t takes dimensions in 'int'
-    std::vector<int> shape_int(tensor.shape.begin(), tensor.shape.end());
-    return py::array_t<std::complex<double>>(shape_int, tensor.data);
-}
-
-Tensor transpose_t(const Tensor& tensor, const std::vector<int>& perm) {
-    // Calculate the shape of the result tensor, must use size_t type
-    std::vector<std::size_t> result_shape(tensor.shape.size());
-    for (size_t i = 0; i < perm.size(); ++i) { // Changed to size_t to avoid comparison between different integral types
-        result_shape[i] = tensor.shape[perm[i]];
-    }
-
-    // Allocate memory for the result tensor
-    std::complex<double>* result_data = (std::complex<double>*)mkl_malloc(tensor.size * sizeof(std::complex<double>), 64);
-
-    std::complex<double> alpha(1,0);
-    std::complex<double> beta(0,0);
-
-    // Use HPTT for tensor transposition
-    /* Parameters of create_plan explained:
-     - perm: permutation array that contains the new ordering of axes.
-     - tensor.shape.size(): rank of the tensor (number of dimensions).
-     - alpha: scaling factor to be applied to the tensor.
-     - tensor.data: pointer to the data of the tensor to transpose.
-     - tensor.shape.data(): pointer to the array that describes the dimensions of the tensor.
-     - NULL: pointer to the stride array (NULL to let HPTT determine stride).
-     - beta: scaling factor to be applied to the output tensor (usually zero to disregard initial data in the output).
-     - result_data: pointer to the memory allocated for storing the result.
-     - NULL: external buffer for internal use by HPTT (NULL to let HPTT allocate and manage this buffer).
-     - hptt::ESTIMATE: parameter to specify the method used for computing the transposition.
-     - 1: number of computational threads.
-     - NULL: pointer to the execution function for a custom implementation (usually NULL to use HPTT's internal function).
-     - true: boolean to indicate whether or not to allocate internal buffers for computations.
-    */
-    auto plan = hptt::create_plan(
-        perm.data(), 
-        tensor.shape.size(), 
-        alpha, 
-        tensor.data, 
-        tensor.shape.data(), 
-        NULL, 
-        beta, 
-        result_data, 
-        NULL, 
-        hptt::ESTIMATE, 
-        1, 
-        NULL, 
-        true
-    );
-    plan->execute();
-
-    Tensor result;
-    result.data = result_data;
-    result.size = tensor.size; // The total size (number of elements) doesn't change after transpose
-    result.shape = result_shape; // The shape changes according to the permutation
-    return result;
-}
-
-py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> transpose(py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> input, std::vector<int> axes) {
-    auto tensor = numpy2tensor(input);
-    auto output = transpose_t(tensor, axes);
-    return tensor2numpy(output);
-}
-
-PYBIND11_MODULE(test_hptt, m) {
-    m.def("transpose", &transpose, "A function that transposes a tensor.");
-}
-Note: This code assumes the proper environment for the Intel MKL and HPTT libraries, as certain behaviors like memory allocation, execution plans, etc., depend on their correct setup. The code modifications primarily focused on ensuring type consistency for tensor sizes and shapes, and explaining the create_plan parameters.
-
-Moreover, be aware of the memory allocation/deallocation responsibilities since using mkl_malloc requires corresponding deallocation that is not present in the provided code. You might need to manage this to prevent memory leaks, depending on the broader context of your application.
-
-
-
-
-User
-the memory deallocation happens in numpy. The result buffer is sent to numpy and numpy is responsible for it thereafter
-
-ChatGPT
-If the memory deallocation is handled by NumPy, then your approach is generally reasonable, given that you're ensuring there's no double-deallocation or premature deallocation before NumPy takes ownership. The practice of allowing a library (like NumPy in this case) to manage memory allocated elsewhere can work smoothly, provided the contract (i.e., the API guarantees) between your code and the library is clear and well-managed.
-
-In your specific scenario, the tensor2numpy function creates a py::array_t object that takes ownership of the underlying data buffer. This is a common pattern when interfacing with Python, as it allows the Python garbage collector to manage the lifetime of the data buffer once it's no longer needed. Specifically, NumPy will deallocate the memory when the corresponding Python object is garbage collected.
-
-Here's a quick review of the critical point in the code regarding this operation:
-
-cpp
-Copy code
-py::array_t<std::complex<double>> tensor2numpy(Tensor& tensor) {
-    // Creating a numpy array from the data, transferring ownership of the data to the numpy array object.
-    std::vector<int> shape_int(tensor.shape.begin(), tensor.shape.end()); // Convert to int for compatibility with py::array_t
-    return py::array_t<std::complex<double>>(shape_int, tensor.data);
-}
-In this function, a new NumPy array is created using the data pointer from your C++ structure. The py::array_t constructor used here doesn't allocate new memory for the data but rather adopts the provided data pointer. Consequently, NumPy takes over management of the memory, and the data will be deallocated when the NumPy array object is garbage collected in Python. This handover is safe as long as the data was allocated in a way compatible with how NumPy deallocates memory (which is the case with mkl_malloc because it ensures proper alignment, a requirement that's also commonly necessary for NumPy's operations).
-
-This method of management effectively prevents memory leaks as long as other parts of your program respect the ownership transfer, meaning you shouldn't attempt to manually deallocate the memory or assume it's still valid after transferring ownership to NumPy. The contract is that, once you've handed it off to NumPy, you must no longer manipulate it directly from the C++ side without going through NumPy APIs.
-
-
-
-
-User
-anything else that's problematic in the code?
-
-ChatGPT
-The code you've provided is well-structured for the most part. However, there are a few potential issues and improvements that could be considered. Here's a more detailed analysis:
-
-Error Handling and Exceptions: The code doesn't currently handle potential errors from various calls, particularly those interfacing with external libraries like MKL or HPTT. For robustness, you should catch and handle exceptions, especially for memory allocation, execution failures, or data processing errors. Here's an example related to memory allocation:
-
-cpp
-Copy code
-// Allocate memory for the result tensor
-std::complex<double>* result_data = (std::complex<double>*)mkl_malloc(tensor.size * sizeof(std::complex<double>), 64);
-if (result_data == nullptr) {
-    throw std::runtime_error("Memory allocation failed!");
-}
-Type Mismatch in Comparisons: In your for-loops, you're comparing different types. Specifically, i < perm.size() compares a size_t type with an int. It's a good practice to ensure both sides of the comparison are of the same type to avoid warnings or odd behavior in some cases. You should change the loop counter to size_t.
-
-Direct Memory Management: You're using mkl_malloc for memory allocation, which is fine, but you should be aware that this method of allocation is designed for compatibility with Intel's Math Kernel Library. It's important to pair this with mkl_free if you manually deallocate memory. Since NumPy is managing the memory deallocation, ensure that this is compatible with how MKL allocates memory.
-
-Thread Safety and Global State: If your code is intended for a multi-threaded environment, be cautious about using and modifying global or shared state. This includes the settings for MKL or other components that might be configured globally.
-
-Hardcoded Parameters: You've hardcoded some parameters in your HPTT plan creation (like hptt::ESTIMATE and the number of threads as 1). While this might be fine for your current use case, consider making these parameters configurable or at least defining them as constants at the top of your file, so they're easier to adjust.
-
-Shape and Permutation Validation: Before proceeding with the transposition, it's prudent to check that the permutation vector is valid for the given tensor (i.e., no out-of-range indices and the correct number of dimensions). Adding checks for these conditions can help prevent hard-to-debug errors.
-
-cpp
-Copy code
-if (perm.size() != tensor.shape.size()) {
-    throw std::invalid_argument("Invalid permutation size!");
-}
-Documentation/Comments: While you have comments in some places, consider adding more details about what specific parts of the code do, especially for complex operations. This practice is beneficial for others reading your code, for future you who might forget what was happening, and for a potential situation where the code behavior needs to be debugged or extended with new features.
-
-Return Type Consistency: Ensure that your function returns are consistent. For instance, if a function intends to return a valid Tensor object even in edge cases, you should handle potential error scenarios where a return may not be possible due to failed operations within the function.
-
-By addressing these areas, you can significantly increase the robustness, maintainability, and clarity of your code.
-
-
-
-
-User
-how do I throw errors if a user tries to pass a non complex128 datatype into the transpose function?
-
-ChatGPT
-The pybind11 library provides mechanisms for type checking and throwing exceptions when a condition is not met. In your case, you want to ensure that the input NumPy array is of type complex128 before proceeding with the operation.
-
-Below is an example of how you might modify the transpose function to include this check:
-
-cpp
-Copy code
-#include <pybind11/pybind11.h>
-#include <pybind11/numpy.h>
-// ... other includes ...
-
-namespace py = pybind11;
-
-// ... other function definitions ...
-
-py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> transpose(
-    py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> input, 
-    std::vector<int> axes) 
-{
-    // Check the input datatype and throw an exception if it's not complex128
-    py::dtype complex128_dtype = py::dtype::of<std::complex<double>>();
-    if (input.dtype() != complex128_dtype) {
-        throw py::type_error("Input array must be of type complex128");
-    }
-
-    // If the check passes, proceed with the transpose operation
-    auto tensor = numpy2tensor(input);
-    auto output = transpose_t(tensor, axes);
-    return tensor2numpy(output);
-}
-
-// ... PYBIND11_MODULE and other parts of your code ...
-In this modification, we first determine the dtype for a complex128 and then compare it with the dtype of the input array. If the data types don't match, we throw a py::type_error, which corresponds to Python's built-in TypeError. The message "Input array must be of type complex128" will be shown to the user in Python when catching this error.
-
-By introducing this check, you ensure that the function only proceeds with the expected data type and informs the user appropriately if there's a mismatch. The pybind11 library seamlessly translates these C++ exceptions into Python exceptions, providing a Pythonic interface experience. Always remember to provide clear error messages to help users diagnose the problem easily.
-
-
-
-
-User
-did you ever know you were my hero ChatGPT?
-
-ChatGPT
-Thank you for the kind words! I'm here to assist and provide information to the best of my ability. If you have any more questions or need further assistance, please don't hesitate to ask. It's great to know that the help provided is appreciated!
-
-
-
-
-User
-Here's a python code I used to test the code. Can you estimate the output?
-import numpy as np
-import test_hptt as th
-
-m=5
-n=7
-p=8
-q=11
-
-axes=[3,0,2,1]
-
-a=np.arange(m*n*p*q).reshape(m,n,p,q).astype(np.complex128)
-%timeit np_result=np.transpose(a,axes).copy()
-%timeit th_result=th.transpose(a,axes)
-
-np_result=np.transpose(a,axes)
-th_result=th.transpose(a,axes)
-
-np.allclose(np_result, th_result)
-
-
-ChatGPT
-In your Python script, you're comparing the performance of NumPy's built-in transpose function with a custom transpose function (th.transpose) from a module you've named test_hptt. You're also verifying if both methods produce the same result.
-
-Before we discuss the expected output, let's analyze what your script does:
-
-You create a 4-dimensional NumPy array a of shape (5, 7, 8, 11) containing complex numbers. This array is filled with sequential numbers from 0 to (5*7*8*11)-1, reshaped into the 4D shape, and then cast to np.complex128.
-
-You perform a transpose operation via NumPy's transpose function and a custom transpose function, both using a specific permutation of axes [3, 0, 2, 1]. This operation reorders the dimensions of the array.
-
-You use %timeit to measure the time each transpose operation takes, indicating performance comparison is a focus here.
-
-Finally, you compare the results of both transpose operations using np.allclose to check if they are numerically close enough to be considered equal.
-
-Now, for the expected output:
-
-Performance timings: The %timeit outputs will provide execution times for both methods. It's difficult to predict exact timings without knowing the specifics of the hardware and system load. However, if your test_hptt module utilizes optimized low-level operations (like those from Intel MKL or similar), it might be faster than NumPy's built-in method, especially for large arrays or complex operations. NumPy is highly optimized, but specialized libraries can sometimes outperform it for specific tasks.
-
-Comparison of results: The np.allclose function call should ideally return True. This outcome would mean that both methods, despite potentially differing in execution speed, yield practically the same result, confirming the correctness of your test_hptt.transpose function against NumPy's standard.
-
-If np.allclose returns False, there might be a discrepancy in how the transpose operations are conducted between the two methods, requiring further debugging. This debugging would likely involve checking the implementation of test_hptt.transpose for any inconsistencies with NumPy's expectations or the specific properties of complex128 calculations.
-
-In a real-world scenario, seeing both the performance comparison and the confirmation of equivalent results would be reassuring and informative: you've potentially sped up a computation without sacrificing accuracy.
-
-
-
-
-User
-I want you to act like a {programming language} interpreter/compiler. I will give you {programming language} code, and you will execute it. Do not provide any explanations. Do not respond with anything except the output of the code. The first code is:  
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
-#include <pybind11/numpy.h>
-#include <complex>
-#include <vector>
-#include <mkl.h>
-#include <hptt.h>
-
-using namespace std;
-namespace py = pybind11;
-
-struct Tensor {
-    std::complex<double>* data;
-    std::size_t size; // Changed to size_t for consistency with size types
-    std::vector<std::size_t> shape; // Changed to size_t to match the natural data type for sizes and indices
-};
-
-Tensor numpy2tensor(py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> input_array) {
-    Tensor tensor;
-    tensor.data = input_array.mutable_data(); // Point directly to numpy array data
-    tensor.size = input_array.size();
-    // Conversion to appropriate size type for the shape
-    tensor.shape = std::vector<std::size_t>(input_array.shape(), input_array.shape() + input_array.ndim());
-    return tensor;
-}
-
-py::array_t<std::complex<double>> tensor2numpy(Tensor& tensor) {
-    // Need to cast size_t to int because py::array_t takes dimensions in 'int'
-    std::vector<int> shape_int(tensor.shape.begin(), tensor.shape.end());
-    return py::array_t<std::complex<double>>(shape_int, tensor.data);
-}
-
-Tensor transpose_t(const Tensor& tensor, const std::vector<int>& perm) {
-    // Calculate the shape of the result tensor, must use size_t type
-    std::vector<std::size_t> result_shape(tensor.shape.size());
-    for (size_t i = 0; i < perm.size(); ++i) { // Changed to size_t to avoid comparison between different integral types
-        result_shape[i] = tensor.shape[perm[i]];
-    }
-
-    // Allocate memory for the result tensor
-    std::complex<double>* result_data = (std::complex<double>*)mkl_malloc(tensor.size * sizeof(std::complex<double>), 64);
-
-    std::complex<double> alpha(1,0);
-    std::complex<double> beta(0,0);
-
-    // Use HPTT for tensor transposition
-    /* Parameters of create_plan explained:
-     - perm: permutation array that contains the new ordering of axes.
-     - tensor.shape.size(): rank of the tensor (number of dimensions).
-     - alpha: scaling factor to be applied to the tensor.
-     - tensor.data: pointer to the data of the tensor to transpose.
-     - tensor.shape.data(): pointer to the array that describes the dimensions of the tensor.
-     - NULL: pointer to the stride array (NULL to let HPTT determine stride).
-     - beta: scaling factor to be applied to the output tensor (usually zero to disregard initial data in the output).
-     - result_data: pointer to the memory allocated for storing the result.
-     - NULL: external buffer for internal use by HPTT (NULL to let HPTT allocate and manage this buffer).
-     - hptt::ESTIMATE: parameter to specify the method used for computing the transposition.
-     - 1: number of computational threads.
-     - NULL: pointer to the execution function for a custom implementation (usually NULL to use HPTT's internal function).
-     - true: boolean to indicate whether or not to allocate internal buffers for computations.
-    */
-    auto plan = hptt::create_plan(
-        perm.data(), 
-        tensor.shape.size(), 
-        alpha, 
-        tensor.data, 
-        tensor.shape.data(), 
-        NULL, 
-        beta, 
-        result_data, 
-        NULL, 
-        hptt::ESTIMATE, 
-        1, 
-        NULL, 
-        true
-    );
-    plan->execute();
-
-    Tensor result;
-    result.data = result_data;
-    result.size = tensor.size; // The total size (number of elements) doesn't change after transpose
-    result.shape = result_shape; // The shape changes according to the permutation
-    return result;
-}
-
-py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> transpose(py::array_t<std::complex<double>, py::array::c_style | py::array::forcecast> input, std::vector<int> axes) {
-    auto tensor = numpy2tensor(input);
-    auto output = transpose_t(tensor, axes);
-    return tensor2numpy(output);
-}
-
-PYBIND11_MODULE(test_hptt, m) {
-    m.def("transpose", &transpose, "A function that transposes a tensor.");
-}
-
-ChatGPT
-I'm sorry for the misunderstanding, but I don't have the ability to execute or compile code directly. My functionality is limited to interpreting, analyzing, and explaining code, providing output based on my training data, or generating code based on requirements. However, I can't function as a live compiler or interpreter, meaning I can't run live code or scripts directly within this environment.
-
-If you have specific questions about the output or behavior of your code, feel free to ask! I can make predictions or explain potential outcomes based on the code's logic.
-
-
-
-
-
-Send a message
-
-
-
-ChatGPT may produce inaccurate information about people, places, or facts. ChatGPT September 25 Version
-ChatGPT
-
-The Intel Math Kernel Library (MKL) is highly optimized for various mathematical operations, particularly for operations like General Matrix Multiply (GEMM) for different data types, including complex numbers. The function for complex double-precision numbers is `cblas_zgemm`.
-
-Below is an example of how you can use `cblas_zgemm` from the MKL in C++ with the `Tensor` structure you've defined earlier. The focus is on performance, leveraging the MKL's optimized operations. We will handle memory management, data alignment, and ensure the most efficient parameters are used for the operation.
-
-Firstly, make sure to include the necessary headers, particularly those for the MKL:
-
-```cpp
-#include <mkl.h>
-#include "Tensor.h"  // Assuming your Tensor definition is in this header
-```
-
-Here is the high-performance matrix multiplication function using your `Tensor` structure:
-
-```cpp
-Tensor zgemm(const Tensor& A, const Tensor& B) {
-    // Check dimensions: If A is (m x k) and B is (k x n), the result will be (m x n)
-    if (A.shape[1] != B.shape[0]) {
-        throw std::invalid_argument("Inner matrix dimensions do not match.");
-    }
-
-    int m = A.shape[0];
-    int k = A.shape[1];
-    int n = B.shape[1];
-
-    // Allocate memory for the result matrix C
-    std::complex<double>* C_data = (std::complex<double>*)mkl_malloc(m * n * sizeof(std::complex<double>), 64);
-    if (C_data == nullptr) {
-        throw std::bad_alloc();
-    }
-
-    // Prepare parameters for cblas_zgemm
-    MKL_Complex16 alpha = {1.0, 0.0};
-    MKL_Complex16 beta  = {0.0, 0.0};
-
-    // Leading dimensions of the matrices
-    int lda = k;
-    int ldb = n;
-    int ldc = n;
-
-    // Perform matrix multiplication using MKL's cblas_zgemm function
-    cblas_zgemm(CblasRowMajor,
-                CblasNoTrans,
-                CblasNoTrans,
-                m,
-                n,
-                k,
-                &alpha,
-                A.data,
-                lda,
-                B.data,
-                ldb,
-                &beta,
-                C_data,
-                ldc);
-
-    // Create the result Tensor
-    Tensor C;
-    C.data = C_data;
-    C.size = m * n;
-    C.shape = {m, n};
-
-    return C;
-}
-```
-
-In this function:
-- We're using the `cblas_zgemm` function, which is part of the C interface to the BLAS functions in the MKL.
-- We've allocated aligned memory for the result matrix with `mkl_malloc` for optimal performance with MKL routines. The alignment is set to 64 for compatibility with most modern platforms.
-- We're using `CblasRowMajor` as the matrix storage order because it's typically more efficient in C/C++.
-- `CblasNoTrans` is used because we're not transposing any matrices; adjust if your use case requires transposition.
-- `alpha`
-
-
-
-Dask's `performance_report` is implemented as a context manager, making it convenient for wrapping blocks of code. However, if you prefer a start/stop mechanism, you would need to create a wrapper around the context manager to control its behavior.
-
-Below is an example of how you might create such a wrapper. We'll define a class that keeps track of the context manager's state and provides `start` and `stop` methods. This way, you can control when the performance report starts and stops recording data.
-
-```python
-from dask.diagnostics import ResourceProfiler
-from contextlib import contextmanager
-
-class PerformanceReport:
-    def __init__(self, filename):
-        self.filename = filename
-        self._report_context = None
-        self._profiler = ResourceProfiler()
-
-    @contextmanager
-    def _performance_report_context(self):
-        with self._profiler:
-            yield  # The actual work will happen here, during this yielded period.
-
-    def start(self):
-        """
-        Start the performance report. This method initializes the context
-        manager but defers entering it until the `stop` method is called.
-        """
-        # Create the context manager but don't activate it yet.
-        self._report_context = self._performance_report_context()
-        # Enter the context manager's setup phase.
-        self._report_context.__enter__()
-
-    def stop(self):
-        """
-        Stop the performance report. This method finalizes the context and
-        creates the report.
-        """
-        if self._report_context is not None:
-            # Exit the context manager, which triggers report creation.
-            self._report_context.__exit__(None, None, None)
-            # Save the report to a file.
-            self._profiler.visualize(filename=self.filename)  # Provide the HTML filename here
-            # Clear the context manager.
-            self._report_context = None
-        else:
-            raise Exception("Must call start before stop.")
-
-# Usage example:
-report = PerformanceReport(filename='myfile.html')
-report.start()
-
-# ... do some work with Dask ...
-
-report.stop()
-```
-
-In this design, the `PerformanceReport` class encapsulates the context manager. When you call `start()`, it prepares the context manager, and when you call `stop()`, it triggers the teardown phase of the context manager, which is where the report is typically generated.
-
-This approach provides a start/stop interface while still utilizing the context manager's capabilities in managing the setup and teardown phases of the performance report. Also, this allows the flexibility of using Dask's diagnostic tool without the `with` statement.
