@@ -64,3 +64,27 @@ py::array_t<double> batch_matrix_multiply(py::array_t<double> array1, py::array_
 PYBIND11_MODULE(example, m) {
     m.def("batch_matrix_multiply", &batch_matrix_multiply, "Perform batch matrix multiplication using MKL");
 }
+
+#include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>
+#include <pybind11/stl.h>
+
+namespace py = pybind11;
+
+void process_numpy_arrays(const py::list& array_list) {
+    for (auto item : array_list) {
+        py::array_t<double> array = item.cast<py::array_t<double>>();
+        py::buffer_info info = array.request();
+        double* data = static_cast<double*>(info.ptr);
+        size_t size = info.size;
+
+        // Process each array (example: print the first element)
+        if (size > 0) {
+            std::cout << "First element of array: " << data[0] << std::endl;
+        }
+    }
+}
+
+PYBIND11_MODULE(example, m) {
+    m.def("process_numpy_arrays", &process_numpy_arrays, "Process a list of numpy arrays");
+}
