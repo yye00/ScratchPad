@@ -43,12 +43,7 @@ py::array_t<double> batch_matrix_multiply(const py::list& A_list, py::array_t<do
             throw std::runtime_error("Matrix dimensions must match for multiplication");
         }
 
-        std::vector<size_t> result_shape = {static_cast<size_t>(batch_size), static_cast<size_t>(rowsA), static_cast<size_t>(colsB)};
-        py::array_t<double> result(result_shape);
-        py::buffer_info buf_result = result.request();
-
         double* ptrA = static_cast<double*>(bufA.ptr);
-        double* ptr_result = static_cast<double*>(buf_result.ptr);
 
         std::vector<const double*> a_array(batch_size);
         std::vector<const double*> b_array(batch_size);
@@ -57,7 +52,7 @@ py::array_t<double> batch_matrix_multiply(const py::list& A_list, py::array_t<do
         for (int i = 0; i < batch_size; ++i) {
             a_array[i] = ptrA;
             b_array[i] = current_B + i * rowsB * colsB;
-            c_array[i] = ptr_result + i * rowsA * colsB;
+            c_array[i] = next_B + i * rowsA * colsB;
         }
 
         const double alpha = 1.0;
@@ -74,7 +69,6 @@ py::array_t<double> batch_matrix_multiply(const py::list& A_list, py::array_t<do
 
         // Swap pointers
         std::swap(current_B, next_B);
-        std::copy(ptr_result, ptr_result + total_elements_B, current_B);
     }
 
     delete[] next_B;
