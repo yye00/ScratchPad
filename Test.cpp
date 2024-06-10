@@ -16,9 +16,9 @@ void cblas_gemm_batch_wrapper_float(int rowsA, int colsB, int colsA, const std::
 
     cblas_sgemm_batch(CblasRowMajor, &trans, &trans, 
                       &rowsA, &colsB, &colsA, 
-                      &alpha, a_array.data(), &colsA, 
-                      b_array.data(), &colsB, 
-                      &beta, c_array.data(), &colsB, 
+                      &alpha, reinterpret_cast<const float**>(a_array.data()), &colsA, 
+                      reinterpret_cast<const float**>(b_array.data()), &colsB, 
+                      &beta, reinterpret_cast<float**>(c_array.data()), &colsB, 
                       1, &batch_size);
 }
 
@@ -30,9 +30,9 @@ void cblas_gemm_batch_wrapper_double(int rowsA, int colsB, int colsA, const std:
 
     cblas_dgemm_batch(CblasRowMajor, &trans, &trans, 
                       &rowsA, &colsB, &colsA, 
-                      &alpha, a_array.data(), &colsA, 
-                      b_array.data(), &colsB, 
-                      &beta, c_array.data(), &colsB, 
+                      &alpha, reinterpret_cast<const double**>(a_array.data()), &colsA, 
+                      reinterpret_cast<const double**>(b_array.data()), &colsB, 
+                      &beta, reinterpret_cast<double**>(c_array.data()), &colsB, 
                       1, &batch_size);
 }
 
@@ -44,8 +44,8 @@ void cblas_gemm_batch_wrapper_complex64(int rowsA, int colsB, int colsA, const s
 
     cblas_cgemm_batch(CblasRowMajor, &trans, &trans, 
                       &rowsA, &colsB, &colsA, 
-                      reinterpret_cast<const MKL_Complex8*>(&alpha), reinterpret_cast<const MKL_Complex8**>(a_array.data()), &colsA, 
-                      reinterpret_cast<const MKL_Complex8**>(b_array.data()), &colsB, 
+                      reinterpret_cast<const MKL_Complex8*>(&alpha), reinterpret_cast<const MKL_Complex8**>(reinterpret_cast<const MKL_Complex8**>(a_array.data())), &colsA, 
+                      reinterpret_cast<const MKL_Complex8**>(reinterpret_cast<const MKL_Complex8**>(b_array.data())), &colsB, 
                       reinterpret_cast<const MKL_Complex8*>(&beta), reinterpret_cast<MKL_Complex8**>(c_array.data()), &colsB, 
                       1, &batch_size);
 }
@@ -58,8 +58,8 @@ void cblas_gemm_batch_wrapper_complex128(int rowsA, int colsB, int colsA, const 
 
     cblas_zgemm_batch(CblasRowMajor, &trans, &trans, 
                       &rowsA, &colsB, &colsA, 
-                      reinterpret_cast<const MKL_Complex16*>(&alpha), reinterpret_cast<const MKL_Complex16**>(a_array.data()), &colsA, 
-                      reinterpret_cast<const MKL_Complex16**>(b_array.data()), &colsB, 
+                      reinterpret_cast<const MKL_Complex16*>(&alpha), reinterpret_cast<const MKL_Complex16**>(reinterpret_cast<const MKL_Complex16**>(a_array.data())), &colsA, 
+                      reinterpret_cast<const MKL_Complex16**>(reinterpret_cast<const MKL_Complex16**>(b_array.data())), &colsB, 
                       reinterpret_cast<const MKL_Complex16*>(&beta), reinterpret_cast<MKL_Complex16**>(c_array.data()), &colsB, 
                       1, &batch_size);
 }
@@ -148,6 +148,4 @@ void batch_matrix_multiply(const py::list& A_list, py::array_t<T> B, const py::l
 }
 
 PYBIND11_MODULE(example, m) {
-    m.def("batch_matrix_multiply_float", &batch_matrix_multiply<float>, "Perform batch matrix multiplication using MKL and update B in place (float)");
-    m.def("batch_matrix_multiply_double", &batch_matrix_multiply<double>, "Perform batch matrix multiplication using MKL and update B in place (double)");
-    m.def("batch_matrix_multiply_complex64", &batch_matrix_multiply<std::complex<float>>, "Perform batch matrix multiplication using MKL and update
+    m.def("batch_matrix_multiply
