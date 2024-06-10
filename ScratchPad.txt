@@ -7,84 +7,114 @@
 
 namespace py = pybind11;
 
-py::array_t<double> batch_matrix_multiply(py::array_t<double> array1, py::array_t<double> array2) {
-    py::buffer_info buf1 = array1.request();
-    py::buffer_info buf2 = array2.request();
+py::list batch_matrix_multiply(const py::list& A_list, py::array_t<double> B, const py::list& B_shapes_list) {
+    py::buffer_info bufB = B.request();
 
-    if (buf1.ndim != 2) {
-        throw std::runtime_error("Input array1 must be 2D");
-    }
-    if (buf2.ndim != 3) {
-        throw std::runtime_error("Input array2 must be 3D");
+    if (bufB.ndim != 2) {
+        throw std::runtime_error("Input matrix B must be 2D");
     }
 
-    auto rows1 = buf1.shape[0];
-    auto cols1 = buf1.shape[1];
-    auto batch_size = buf2.shape[0];
-    auto rows2 = buf2.shape[1];
-    auto cols2 = buf2.shape[2];
+    py::list result_list;
 
-    if (cols1 != rows2) {
-        throw std::runtime_error("Matrix dimensions must match for multiplication");
+    for (size_t idx = 0; idx < A_list.size(); ++idx) {
+        py::array_t<double> A = A_list[idx].cast<py::array_t<double>>();
+        py::buffer_info bufA = A.request();
+        std::vector<int> B_shape = B_shapes_list[idx].cast<std::vector<int>>();
+
+        if (bufA.ndim != 2) {
+            throw std::runtime_error("Each matrix in A_list must be 2D");
+        }
+
+        int rowsA = bufA.shape[0];
+        int colsA = bufA.shape[1];
+
+        int batch_size = B_shape[0];
+        int rowsB = B_shape[1];
+        int colsB = B_shape[2];
+
+        if (bufB.shape[0] != batch_size * rowsB) {
+            throw std::runtime_error("The shape of B does not match the given batch size and dimensions");
+        }
+
+        if (colsA != rowsB) {
+            throw std::runtime_error("Matrix dimensions must match for multiplication");
+        }
+
+        std::vector<size_t> result_shape = {static_cast<size_t>(batch_size), static_cast<size_t>(rowsA), static_cast<size_t>(colsB)};
+        py::array_t<double> result(result_shape);
+        py::buffer_info buf_result = result.request();
+
+        double* ptrA = static_cast<double*>(bufA.ptr);
+        double* ptrB = static_cast<double*>(bufB.ptr);
+        double* ptr_result = static_cast<double*>(buf_result.ptr);
+
+        std::vector<const double*> a_array(batch_size);
+        std::vector<const double*> b_array(batch_size);
+        std::vector<double*> c_array(batch_size);
+
+        for (int i = 0; i < batch_size; ++i) {
+            a_array[i] = ptrA;
+            b_array[i] = ptrB + i * rowsB * colsB;
+            c_array[i] = ptr_result + i * rowsA * colsB;
+        }
+
+        const double alpha = 1.0;
+        const double beta = 0.0;
+
+        CBLAS_TRANSPOSE trans = CblasNoTrans;
+
+        cblas_dgemm_batch(CblasRowMajor, &trans, &trans, 
+                          &rowsA, &colsB, &colsA, 
+                          &alpha, a_array.data(), &colsA, 
+                          b_array.data(), &colsB, 
+                          &beta, c_array.data(), &colsB, 
+                          1, &batch_size);
+
+        result_list.append(result);
     }
 
-    std::vector<size_t> result_shape = {batch_size, rows1, cols2};
-    py::array_t<double> result(result_shape);
-    py::buffer_info buf_result = result.request();
-
-    double* ptr1 = static_cast<double*>(buf1.ptr);
-    double* ptr2 = static_cast<double*>(buf2.ptr);
-    double* ptr_result = static_cast<double*>(buf_result.ptr);
-
-    std::vector<const double*> a_array(batch_size);
-    std::vector<const double*> b_array(batch_size);
-    std::vector<double*> c_array(batch_size);
-
-    for (size_t i = 0; i < batch_size; ++i) {
-        a_array[i] = ptr1;
-        b_array[i] = ptr2 + i * rows2 * cols2;
-        c_array[i] = ptr_result + i * rows1 * cols2;
-    }
-
-    const double alpha = 1.0;
-    const double beta = 0.0;
-
-    CBLAS_TRANSPOSE trans = CblasNoTrans;
-
-    cblas_dgemm_batch(CblasRowMajor, &trans, &trans, 
-                      &rows1, &cols2, &cols1, 
-                      &alpha, a_array.data(), &cols1, 
-                      b_array.data(), &cols2, 
-                      &beta, c_array.data(), &cols2, 
-                      1, &batch_size);
-
-    return result;
+    return result_list;
 }
 
 PYBIND11_MODULE(example, m) {
     m.def("batch_matrix_multiply", &batch_matrix_multiply, "Perform batch matrix multiplication using MKL");
 }
 
-#include <pybind11/pybind11.h>
-#include <pybind11/numpy.h>
-#include <pybind11/stl.h>
+cmake_minimum_required(VERSION 3.4...3.18)
+project(example)
 
-namespace py = pybind11;
+set(CMAKE_CXX_STANDARD 14)
 
-void process_numpy_arrays(const py::list& array_list) {
-    for (auto item : array_list) {
-        py::array_t<double> array = item.cast<py::array_t<double>>();
-        py::buffer_info info = array.request();
-        double* data = static_cast<double*>(info.ptr);
-        size_t size = info.size;
+find_package(pybind11 REQUIRED)
 
-        // Process each array (example: print the first element)
-        if (size > 0) {
-            std::cout << "First element of array: " << data[0] << std::endl;
-        }
-    }
-}
+# Find MKL
+find_package(MKL REQUIRED)
 
-PYBIND11_MODULE(example, m) {
-    m.def("process_numpy_arrays", &process_numpy_arrays, "Process a list of numpy arrays");
-}
+# Add include directories and link libraries for MKL
+include_directories(${MKL_INCLUDE_DIR})
+link_directories(${MKL_LIB_DIR})
+
+pybind11_add_module(example example.cpp)
+
+# Link MKL libraries
+target_link_libraries(example PRIVATE ${MKL_LIBRARIES})
+
+
+import numpy as np
+import example
+
+# Create a list of 2D matrices (A_list)
+A_list = [np.array([[1.0, 2.0], [3.0, 4.0]]), np.array([[5.0, 6.0], [7.0, 8.0]])]
+
+# Create a 2D matrix (B)
+B = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0], [13.0, 14.0, 15.0, 16.0]])
+
+# Define the shapes of B for reshaping
+B_shapes = [[2, 2, 2], [2, 2, 2]]  # Two shapes, one for each A
+
+# Perform batch matrix multiplication
+result_list = example.batch_matrix_multiply(A_list, B, B_shapes)
+
+print("Result of batch matrix multiplication:")
+for result in result_list:
+    print(result)
