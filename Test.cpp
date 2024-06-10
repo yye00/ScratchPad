@@ -7,7 +7,7 @@
 
 namespace py = pybind11;
 
-py::array_t<double> batch_matrix_multiply(const py::list& A_list, py::array_t<double> B, const py::list& B_shapes_list) {
+void batch_matrix_multiply(const py::list& A_list, py::array_t<double> B, const py::list& B_shapes_list) {
     py::buffer_info bufB = B.request();
 
     if (bufB.ndim != 1) {
@@ -43,14 +43,12 @@ py::array_t<double> batch_matrix_multiply(const py::list& A_list, py::array_t<do
             throw std::runtime_error("Matrix dimensions must match for multiplication");
         }
 
-        double* ptrA = static_cast<double*>(bufA.ptr);
-
         std::vector<const double*> a_array(batch_size);
         std::vector<const double*> b_array(batch_size);
         std::vector<double*> c_array(batch_size);
 
         for (int i = 0; i < batch_size; ++i) {
-            a_array[i] = ptrA;
+            a_array[i] = static_cast<double*>(bufA.ptr);
             b_array[i] = current_B + i * rowsB * colsB;
             c_array[i] = next_B + i * rowsA * colsB;
         }
@@ -71,22 +69,13 @@ py::array_t<double> batch_matrix_multiply(const py::list& A_list, py::array_t<do
         std::swap(current_B, next_B);
     }
 
+    // Update the original numpy array to point to the new data
+    py::detail::array_proxy(B.ptr())->data = current_B;
+
+    // Free the old B data
     delete[] next_B;
-
-    // Create a capsule to manage the memory
-    py::capsule free_when_done(current_B, [](void* f) {
-        double* foo = reinterpret_cast<double*>(f);
-        delete[] foo;
-    });
-
-    return py::array_t<double>(
-        {total_elements_B},  // shape
-        {sizeof(double)},    // stride
-        current_B,           // the data pointer
-        free_when_done       // the capsule
-    );
 }
 
 PYBIND11_MODULE(example, m) {
-    m.def("batch_matrix_multiply", &batch_matrix_multiply, "Perform batch matrix multiplication using MKL and update B");
+    m.def("batch_matrix_multiply", &batch_matrix_multiply, "Perform batch matrix multiplication using MKL and update B in place");
 }
