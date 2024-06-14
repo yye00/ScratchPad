@@ -5,8 +5,21 @@
 #include <complex>
 #include <vector>
 #include <iostream>
+#include <omp.h>
 
 namespace py = pybind11;
+
+// Function to initialize OpenMP threads
+void initialize_omp_threads() {
+    #pragma omp parallel
+    {
+        // This parallel region will spawn the worker threads
+        #pragma omp single
+        {
+            std::cout << "Initialized OpenMP with " << omp_get_num_threads() << " threads." << std::endl;
+        }
+    }
+}
 
 void batch_matrix_multiply(const py::list& A_list, py::array_t<std::complex<float>> B, const py::list& B_shapes_list) {
     py::buffer_info bufB = B.request();
@@ -44,20 +57,28 @@ void batch_matrix_multiply(const py::list& A_list, py::array_t<std::complex<floa
             throw std::runtime_error("Matrix dimensions must match for multiplication");
         }
 
-        for (int i = 0; i < batch_size; ++i) {
-            const std::complex<float>* a = static_cast<std::complex<float>*>(bufA.ptr);
-            const std::complex<float>* b = current_B + i * rowsB * colsB;
-            std::complex<float>* c = next_B + i * rowsA * colsB;
+        #pragma omp parallel
+        {
+            std::vector<const std::complex<float>*> a_array(batch_size);
+            std::vector<const std::complex<float>*> b_array(batch_size);
+            std::vector<std::complex<float>*> c_array(batch_size);
 
-            const std::complex<float> alpha(1.0f, 0.0f);
-            const std::complex<float> beta(0.0f, 0.0f);
-            CBLAS_TRANSPOSE trans = CblasNoTrans;
+            #pragma omp for
+            for (int i = 0; i < batch_size; ++i) {
+                a_array[i] = static_cast<std::complex<float>*>(bufA.ptr);
+                b_array[i] = current_B + i * rowsB * colsB;
+                c_array[i] = next_B + i * rowsA * colsB;
 
-            cblas_cgemm(CblasRowMajor, trans, trans, 
-                        rowsA, colsB, colsA, 
-                        reinterpret_cast<const MKL_Complex8*>(&alpha), reinterpret_cast<const MKL_Complex8*>(a), colsA, 
-                        reinterpret_cast<const MKL_Complex8*>(b), colsB, 
-                        reinterpret_cast<const MKL_Complex8*>(&beta), reinterpret_cast<MKL_Complex8*>(c), colsB);
+                const std::complex<float> alpha(1.0f, 0.0f);
+                const std::complex<float> beta(0.0f, 0.0f);
+                CBLAS_TRANSPOSE trans = CblasNoTrans;
+
+                cblas_cgemm(CblasRowMajor, trans, trans, 
+                            rowsA, colsB, colsA, 
+                            reinterpret_cast<const MKL_Complex8*>(&alpha), reinterpret_cast<const MKL_Complex8*>(a_array[i]), colsA, 
+                            reinterpret_cast<const MKL_Complex8*>(b_array[i]), colsB, 
+                            reinterpret_cast<const MKL_Complex8*>(&beta), reinterpret_cast<MKL_Complex8*>(c_array[i]), colsB);
+            }
         }
 
         // Swap pointers
@@ -72,5 +93,6 @@ void batch_matrix_multiply(const py::list& A_list, py::array_t<std::complex<floa
 }
 
 PYBIND11_MODULE(example, m) {
+    m.def("initialize_omp_threads", &initialize_omp_threads, "Initialize OpenMP threads early in the application");
     m.def("batch_matrix_multiply", &batch_matrix_multiply, "Perform batch matrix multiplication using MKL and update B in place");
 }
