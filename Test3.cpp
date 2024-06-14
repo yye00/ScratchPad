@@ -2,25 +2,26 @@
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 #include <mkl.h>
+#include <complex>
 #include <vector>
 #include <iostream>
 
 namespace py = pybind11;
 
-void batch_matrix_multiply(const py::list& A_list, py::array_t<double> B, const py::list& B_shapes_list) {
+void batch_matrix_multiply(const py::list& A_list, py::array_t<std::complex<double>> B, const py::list& B_shapes_list) {
     py::buffer_info bufB = B.request();
 
     if (bufB.ndim != 1) {
         throw std::runtime_error("Input matrix B must be 1D");
     }
 
-    double* current_B = static_cast<double*>(bufB.ptr);
+    std::complex<double>* current_B = static_cast<std::complex<double>*>(bufB.ptr);
     int total_elements_B = bufB.size;
 
-    double* next_B = new double[total_elements_B];
+    std::complex<double>* next_B = new std::complex<double>[total_elements_B];
 
     for (size_t idx = 0; idx < A_list.size(); ++idx) {
-        py::array_t<double> A = A_list[idx].cast<py::array_t<double>>();
+        py::array_t<std::complex<double>> A = A_list[idx].cast<py::array_t<std::complex<double>>>();
         py::buffer_info bufA = A.request();
         std::vector<int> B_shape = B_shapes_list[idx].cast<std::vector<int>>();
 
@@ -44,19 +45,19 @@ void batch_matrix_multiply(const py::list& A_list, py::array_t<double> B, const 
         }
 
         for (int i = 0; i < batch_size; ++i) {
-            const double* a = static_cast<double*>(bufA.ptr);
-            const double* b = current_B + i * rowsB * colsB;
-            double* c = next_B + i * rowsA * colsB;
+            const std::complex<double>* a = static_cast<std::complex<double>*>(bufA.ptr);
+            const std::complex<double>* b = current_B + i * rowsB * colsB;
+            std::complex<double>* c = next_B + i * rowsA * colsB;
 
-            const double alpha = 1.0;
-            const double beta = 0.0;
+            const std::complex<double> alpha(1.0, 0.0);
+            const std::complex<double> beta(0.0, 0.0);
             CBLAS_TRANSPOSE trans = CblasNoTrans;
 
-            cblas_dgemm(CblasRowMajor, trans, trans, 
+            cblas_zgemm(CblasRowMajor, trans, trans, 
                         rowsA, colsB, colsA, 
-                        alpha, a, colsA, 
-                        b, colsB, 
-                        beta, c, colsB);
+                        &alpha, reinterpret_cast<const MKL_Complex16*>(a), colsA, 
+                        reinterpret_cast<const MKL_Complex16*>(b), colsB, 
+                        &beta, reinterpret_cast<MKL_Complex16*>(c), colsB);
         }
 
         // Swap pointers
