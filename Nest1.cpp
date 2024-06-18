@@ -3,6 +3,7 @@
 #include <complex>
 #include <numeric>
 #include <omp.h>
+#include <cstring> // For memcpy
 
 // Function to perform work in the inner loop
 void do_inner_work(int i, int j, std::vector<std::complex<double>>& complex_vec) {
@@ -33,11 +34,12 @@ int main() {
     #pragma omp parallel num_threads(num_outer_threads)
     {
         int outer_thread_id = omp_get_thread_num();
-        std::vector<std::complex<double>> complex_vec_private = complex_vec; // Deep copy for each outer thread
+        // Allocate memory for the private copy and use memcpy
+        std::vector<std::complex<double>> complex_vec_private(vector_size);
+        std::memcpy(complex_vec_private.data(), complex_vec.data(), vector_size * sizeof(std::complex<double>));
 
         #pragma omp parallel for num_threads(num_inner_threads) firstprivate(complex_vec_private)
         for (int j = 0; j < inner_loop_size; ++j) {
-            int inner_thread_id = omp_get_thread_num();
             do_inner_work(outer_thread_id, j, complex_vec_private);
         }
 
