@@ -1,20 +1,15 @@
 #include <iostream>
+#include <vector>
 #include <complex>
 #include <omp.h>
 #include <cstring> // For memcpy
+#include <cblas.h> // For cblas_zaxpy
 
 // Function to perform work in the inner loop
 void do_inner_work(int i, int j, std::complex<double>* complex_vec, int vector_size) {
     // Modify the vector elements
     for (int k = 0; k < vector_size; ++k) {
         complex_vec[k] += std::complex<double>(i, j);
-    }
-}
-
-// zaxpy-like function to perform element-wise addition (reduction)
-void zaxpy(int n, const std::complex<double>* x, std::complex<double>* y) {
-    for (int i = 0; i < n; ++i) {
-        y[i] += x[i];
     }
 }
 
@@ -55,8 +50,8 @@ int main() {
             do_inner_work(outer_thread_id, j, complex_vec_private, vector_size);
         }
 
-        // Store the result in the thread-specific results array
-        zaxpy(vector_size, complex_vec_private, thread_results[outer_thread_id]);
+        // Store the result in the thread-specific results array using cblas_zaxpy
+        cblas_zaxpy(vector_size, &std::complex<double>(1.0, 0.0), complex_vec_private, 1, thread_results[outer_thread_id], 1);
 
         delete[] complex_vec_private;
     }
@@ -65,7 +60,7 @@ int main() {
     std::complex<double>* reduction_result = new std::complex<double>[vector_size];
     std::fill(reduction_result, reduction_result + vector_size, std::complex<double>(0.0, 0.0));
     for (int t = 0; t < num_outer_threads; ++t) {
-        zaxpy(vector_size, thread_results[t], reduction_result);
+        cblas_zaxpy(vector_size, &std::complex<double>(1.0, 0.0), thread_results[t], 1, reduction_result, 1);
         delete[] thread_results[t];
     }
     delete[] thread_results;
