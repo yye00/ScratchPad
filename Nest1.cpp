@@ -1,65 +1,64 @@
+#include <iostream>
 #include <vector>
-#include <queue>
-#include <thread>
-#include <mutex>
-#include <condition_variable>
-#include <functional>
+#include <complex>
+#include <numeric>
+#include <omp.h>
 
-class ThreadPool {
-public:
-    ThreadPool(size_t num_threads);
-    ~ThreadPool();
-
-    void enqueue(std::function<void()> task);
-
-private:
-    std::vector<std::thread> workers;
-    std::queue<std::function<void()>> tasks;
-
-    std::mutex queue_mutex;
-    std::condition_variable condition;
-    bool stop;
-
-    void worker_thread();
-};
-
-ThreadPool::ThreadPool(size_t num_threads) : stop(false) {
-    for (size_t i = 0; i < num_threads; ++i) {
-        workers.emplace_back([this] { this->worker_thread(); });
+// Function to perform work in the inner loop
+void do_inner_work(int i, int j, std::vector<std::complex<double>>& complex_vec) {
+    // Modify the vector elements
+    for (auto& elem : complex_vec) {
+        elem += std::complex<double>(i, j);
     }
 }
 
-ThreadPool::~ThreadPool() {
+int main() {
+    const int outer_loop_size = 90;
+    const int inner_loop_size = 10;
+    const int vector_size = 5;
+
+    // Initialize a vector of complex numbers
+    std::vector<std::complex<double>> complex_vec(vector_size, std::complex<double>(1.0, 1.0));
+
+    // Enable nested parallelism by setting the maximum number of active parallel levels
+    omp_set_max_active_levels(2);
+
+    // Specify the number of threads for the outer and inner loops
+    const int num_outer_threads = 4;
+    const int num_inner_threads = 2;
+
+    // Array to hold results for each thread in the outer loop
+    std::vector<std::vector<std::complex<double>>> thread_results(num_outer_threads, std::vector<std::complex<double>>(vector_size, std::complex<double>(0.0, 0.0)));
+
+    #pragma omp parallel num_threads(num_outer_threads)
     {
-        std::unique_lock<std::mutex> lock(queue_mutex);
-        stop = true;
-    }
-    condition.notify_all();
-    for (std::thread &worker : workers) {
-        worker.join();
-    }
-}
+        int outer_thread_id = omp_get_thread_num();
+        std::vector<std::complex<double>> complex_vec_private = complex_vec; // Deep copy for each outer thread
 
-void ThreadPool::enqueue(std::function<void()> task) {
-    {
-        std::unique_lock<std::mutex> lock(queue_mutex);
-        tasks.push(task);
-    }
-    condition.notify_one();
-}
-
-void ThreadPool::worker_thread() {
-    while (true) {
-        std::function<void()> task;
-        {
-            std::unique_lock<std::mutex> lock(queue_mutex);
-            condition.wait(lock, [this] { return this->stop || !this->tasks.empty(); });
-            if (this->stop && this->tasks.empty()) {
-                return;
-            }
-            task = std::move(this->tasks.front());
-            this->tasks.pop();
+        #pragma omp parallel for num_threads(num_inner_threads) firstprivate(complex_vec_private)
+        for (int j = 0; j < inner_loop_size; ++j) {
+            int inner_thread_id = omp_get_thread_num();
+            do_inner_work(outer_thread_id, j, complex_vec_private);
         }
-        task();
+
+        // Store the result in the thread-specific results array
+        for (int k = 0; k < vector_size; ++k) {
+            thread_results[outer_thread_id][k] += complex_vec_private[k];
+        }
     }
+
+    // Final reduction: sum the results from each thread
+    std::vector<std::complex<double>> reduction_result(vector_size, std::complex<double>(0.0, 0.0));
+    for (int t = 0; t < num_outer_threads; ++t) {
+        for (int k = 0; k < vector_size; ++k) {
+            reduction_result[k] += thread_results[t][k];
+        }
+    }
+
+    // Print the result
+    for (int k = 0; k < vector_size; ++k) {
+        std::cout << "reduction_result[" << k << "] = " << reduction_result[k] << std::endl;
+    }
+
+    return 0;
 }
